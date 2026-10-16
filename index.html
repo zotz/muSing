@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#101925">
+  <title>muSing Lab</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <div class="shell">
+    <header class="topbar">
+      <a class="brand" href="#home" aria-label="muSing Lab home"><span class="brand-mark">♪</span> muSing <span>lab</span></a>
+      <span class="eyebrow">Small experiments for better singing</span>
+    </header>
+    <main>
+      <section class="hero" id="home">
+        <div>
+          <p class="kicker">VOICE + EAR TRAINING</p>
+          <h1>Practice with<br><em>feedback you can use.</em></h1>
+          <p class="intro">Explore your comfortable range, sing a note back, tune by ear, identify an interval, or analyze a vocal phrase. Your results stay in this browser.</p>
+        </div>
+        <div class="hero-art" aria-hidden="true"><div class="orb orb-one"></div><div class="orb orb-two"></div><div class="wave">∿ ∿ ∿</div></div>
+      </section>
+
+      <nav class="tabs" aria-label="Exercises">
+        <button class="tab active" data-view="pitch" aria-selected="true">01 <span>Sing a pitch</span></button>
+        <button class="tab" data-view="tune" aria-selected="false">02 <span>Tune a note</span></button>
+        <button class="tab" data-view="interval" aria-selected="false">03 <span>Hear an interval</span></button>
+        <button class="tab" data-view="range" aria-selected="false">04 <span>Find range</span></button>
+        <button class="tab" data-view="analyze" aria-selected="false">05 <span>Analyze voice</span></button>
+        <button class="tab" data-view="results" aria-selected="false">06 <span>Results</span></button>
+      </nav>
+      <div class="capture-settings"><div><label for="capture-duration" class="field-label">MICROPHONE CAPTURE LENGTH</label><p>Used for Sing a Pitch and Find Range.</p></div><select id="capture-duration"><option value="0.5">0.5 second</option><option value="1">1 second</option><option value="1.5">1.5 seconds</option><option value="2" selected>2 seconds</option><option value="3">3 seconds</option></select></div>
+
+      <section class="panel" id="pitch-panel">
+        <div class="panel-heading"><div><p class="kicker">EXPERIMENT 01</p><h2>Sing a pitch</h2><p>Hear a target and sing it back. Try continuous headphone comparison, or record a short attempt to measure accuracy and steadiness.</p></div><span class="pill">Microphone needed</span></div>
+        <div class="exercise-layout">
+          <div class="exercise-main">
+            <div class="range-control"><label for="voice-range" class="field-label">COMFORTABLE RANGE</label><select id="voice-range"><option value="low">Lower notes · C3–B3</option><option value="middle" selected>Middle notes · G3–G4</option><option value="high">Higher notes · C4–C5</option></select></div>
+            <div class="target-display"><span class="field-label">TARGET NOTE</span><strong id="target-note">C4</strong><span id="target-frequency">261.6 Hz</span></div>
+            <div class="controls"><button class="button button-primary" id="play-target">▶ &nbsp; Play target</button><button class="button button-outline" id="new-target">New note</button></div>
+            <div class="listen-card"><div><span class="field-label">YOUR VOICE</span><div class="live-reading" id="live-reading">—</div><p id="live-detail">Enable the microphone to see live pitch.</p></div><div class="tuning-meter" aria-label="Pitch offset from target"><div class="meter-track"><span class="meter-center"></span><span id="meter-needle" class="meter-needle"></span></div><div class="meter-labels"><span>−50¢</span><span>In tune</span><span>+50¢</span></div></div></div>
+            <div class="controls"><button class="button button-outline" id="mic-toggle">Enable microphone</button><button class="button button-primary" id="record-attempt" disabled>Record 2-second attempt</button></div>
+            <div class="comparison-card"><span class="field-label">HEADPHONE COMPARISON</span><p>Keep the target sounding while you sing. Your monitored voice moves to the opposite ear.</p><div class="controls"><button class="button button-outline" id="continuous-target">Start continuous target</button><label class="toggle-line"><input type="checkbox" id="monitor-voice" disabled> Hear my voice in headphones</label></div><label for="voice-pan" class="field-label">TARGET / VOICE POSITION</label><input id="voice-pan" class="wide-slider" type="range" min="-100" max="100" value="-100"><div class="meter-labels"><span>Target L · Voice R</span><span>Center</span><span>Target R · Voice L</span></div><p class="small-note">Use headphones. Start at a low headphone volume; live monitoring may have a slight delay.</p></div>
+            <p class="status" id="pitch-status" role="status">Use headphones if possible. Play the note, then record while you sing.</p>
+          </div>
+          <aside class="insight-card"><span class="field-label">LATEST ATTEMPT</span><div id="attempt-result" class="attempt-placeholder">Your accuracy and steadiness will appear here.</div><div class="tip"><span>✦</span><p>A steady note within ±25 cents is a useful starting target. Aim for consistency across several attempts.</p></div></aside>
+        </div>
+      </section>
+
+      <section class="panel hidden" id="tune-panel">
+        <div class="panel-heading"><div><p class="kicker">EXPERIMENT 02</p><h2>Tune a note by ear</h2><p>Adjust a second tone until you think it matches the target. No microphone is needed.</p></div><span class="pill">Listening only</span></div>
+        <div class="tune-layout"><div class="exercise-main"><div class="range-control"><label for="tune-range" class="field-label">TARGET RANGE</label><select id="tune-range"><option value="low">Lower notes · C3–B3</option><option value="middle" selected>Middle notes · G3–G4</option><option value="high">Higher notes · C4–C5</option></select></div><div class="target-display"><span class="field-label">TARGET NOTE</span><strong id="tune-target-note">C4</strong></div><div class="controls"><button class="button button-outline" id="new-tune-target">New target</button></div><div class="comparison-card"><span class="field-label">LISTENING MODE</span><label class="toggle-line"><input type="checkbox" id="sequential-mode"> Play target, then matching tone</label><p id="mode-description">Both tones play together; moving the slider changes the matching tone live.</p></div><div class="controls"><button class="button button-primary" id="play-tune">▶ &nbsp; Start both tones</button></div><label for="tune-slider" class="field-label">ADJUST THE MATCHING TONE</label><input id="tune-slider" class="wide-slider" type="range" min="48" max="72" step="0.01" value="57" aria-label="Adjust matching tone from lower to higher pitch"><div class="meter-labels"><span>Lower</span><span>Higher</span></div><div class="comparison-card"><label for="tune-pan" class="field-label">TARGET / MATCHING TONE POSITION</label><input id="tune-pan" class="wide-slider" type="range" min="-100" max="100" value="-100"><div class="meter-labels"><span>Target L · Match R</span><span>Center</span><span>Target R · Match L</span></div><p class="small-note">Use headphones to hear the separation. The same positions apply in either listening mode.</p></div><div class="controls"><label class="toggle-line"><input type="checkbox" id="show-difference"> Show difference while adjusting</label><button class="button button-outline" id="check-tune" disabled>Check match</button></div><p class="status" id="tune-status" role="status">Start the tones, adjust by ear, then check your match.</p></div><aside class="insight-card"><span class="field-label">YOUR MATCH</span><div id="tune-feedback" class="attempt-placeholder">The pitch difference is hidden until you check.</div><div class="tip"><span>✦</span><p>For the memory test, switch to sequential mode. Replay the pair after each adjustment.</p></div></aside></div>
+      </section>
+
+      <section class="panel hidden" id="interval-panel">
+        <div class="panel-heading"><div><p class="kicker">EXPERIMENT 03</p><h2>Hear an interval</h2><p>Listen to two notes, then name the distance between them. A short set of five intervals keeps each session comparable.</p></div><span class="pill">Headphones helpful</span></div>
+        <div class="interval-layout"><div class="interval-stage"><span class="field-label">LISTEN & CHOOSE</span><div class="interval-symbol" aria-hidden="true">♫</div><p id="interval-progress">Question 1 of 5</p><div class="controls centered"><button class="button button-primary" id="play-interval">▶ &nbsp; Play notes</button><button class="button button-outline" id="next-interval" disabled>Next question</button></div><p class="status" id="interval-status" role="status">You can replay the notes before answering.</p></div><div><div id="interval-options" class="option-list"></div><div class="interval-score"><span>SESSION SCORE</span><strong id="interval-score">0 / 0</strong></div></div></div>
+      </section>
+
+      <section class="panel hidden" id="range-panel">
+        <div class="panel-heading"><div><p class="kicker">EXPERIMENT 04</p><h2>Find your range</h2><p>Hold three easy, steady notes: your lowest comfortable note, highest comfortable note, and a “happy note” that feels natural to sing. You can retry each one before saving.</p></div><span class="pill">Microphone needed</span></div>
+        <div class="range-layout">
+          <div class="exercise-main">
+            <div class="range-live"><div><span class="field-label">LIVE PITCH</span><div id="range-live-note" class="live-reading">—</div><p id="range-live-detail">Enable the microphone, then sing a sustained note.</p></div><button class="button button-outline" id="range-mic">Enable microphone</button></div>
+            <div class="range-steps">
+              <div class="range-step"><div><span class="field-label">01 · LOW</span><h3>Lowest comfortable note</h3><p>Sing low without straining and hold it steady.</p><strong id="range-low-value">Not captured</strong></div><button class="button button-outline range-capture" data-kind="low" disabled>Capture low</button></div>
+              <div class="range-step"><div><span class="field-label">02 · HIGH</span><h3>Highest comfortable note</h3><p>Sing high without pushing and hold it steady.</p><strong id="range-high-value">Not captured</strong></div><button class="button button-outline range-capture" data-kind="high" disabled>Capture high</button></div>
+              <div class="range-step"><div><span class="field-label">03 · HAPPY</span><h3>Your happy note</h3><p>Choose an easy note you enjoy singing.</p><strong id="range-happy-value">Not captured</strong></div><button class="button button-outline range-capture" data-kind="happy" disabled>Capture happy</button></div>
+            </div>
+            <div class="controls"><button class="button button-primary" id="save-range" disabled>Save range session</button></div>
+            <p class="status" id="range-status" role="status">Each capture uses the selected length and saves a pitch measurement.</p>
+          </div>
+          <aside class="insight-card"><span class="field-label">YOUR RANGE</span><div id="range-summary" class="attempt-placeholder">Capture all three notes to see your range.</div><div class="tip"><span>✦</span><p>Your range can change from day to day. Use comfortable notes; this is a practice snapshot, not a vocal limit.</p></div></aside>
+        </div>
+        <div class="range-keyboard-card"><div class="range-keyboard-heading"><span class="field-label">YOUR NOTES ON A KEYBOARD</span><span id="range-session-label">Current session</span></div><p class="range-keyboard-help">Click any key to hear it. Colored markers and buttons play your measured pitches.</p><div id="range-keyboard" class="range-keyboard"></div><div class="range-keyboard-legend"><button id="play-range-low" class="range-note-button low" disabled>▶ Low</button><button id="play-range-happy" class="range-note-button happy" disabled>▶ Happy</button><button id="play-range-high" class="range-note-button high" disabled>▶ High</button><span class="range-fill">Highlighted keys show your range</span></div><p id="range-playback-status" class="range-playback-status" role="status"></p></div>
+        <div class="range-history-section"><h3>Saved sessions</h3><div id="range-history" class="history"></div></div>
+      </section>
+
+      <section class="panel hidden" id="analyze-panel">
+        <div class="panel-heading"><div><p class="kicker">EXPERIMENT 05</p><h2>Analyze your voice</h2><p>Record a solo vocal phrase, listen back, then inspect its waveform and detected notes.</p></div><span class="pill">Microphone needed</span></div>
+        <div class="analyze-record-card">
+          <div><span class="field-label">RECORDING</span><div id="analyze-timer" class="analyze-timer">0:00</div><p id="analyze-status" class="status" role="status">Record a short solo phrase to begin.</p></div>
+          <div class="controls"><button class="button button-primary" id="analyze-start">Start recording</button><button class="button button-outline" id="analyze-stop" disabled>Stop recording</button></div>
+        </div>
+        <div class="analyze-playback-card"><span class="field-label">LISTEN BACK</span><audio id="analyze-audio" controls preload="metadata"></audio><div class="controls"><button class="button button-primary" id="analyze-run" disabled>Analyze recording</button><button class="button button-outline" id="analyze-download" disabled>Download recording</button></div><p class="small-note">Download a copy if you want to keep or share this recording. The copy in this browser tab is lost when you refresh.</p></div>
+        <div id="analyze-results" class="hidden">
+          <div class="analyze-workspace-card">
+            <div class="analyze-plot-heading"><h3>Edit phrase</h3><span id="analyze-duration"></span></div>
+            <div class="analyze-timeline-tools">
+              <label for="analyze-speed">Playback speed</label><select id="analyze-speed"><option value="0.5">0.5×</option><option value="0.75">0.75×</option><option value="1" selected>1×</option><option value="1.25">1.25×</option></select><span>Applies to all playback; analysis and export stay unchanged.</span>
+              <label for="analyze-zoom">Time zoom</label><input id="analyze-zoom" type="range" min="1" max="8" step="1" value="1"><span id="analyze-zoom-value">1×</span>
+              <label for="analyze-scrub-mode">Seek cue</label><select id="analyze-scrub-mode"><option value="voice" selected>Voice</option><option value="note">Note</option><option value="both">Voice + note</option><option value="off">Off</option></select>
+            </div>
+            <div class="analyze-playhead-label"><span class="field-label">PLAYHEAD · DRAG THE YELLOW CIRCLE ON THE WAVEFORM</span><output id="analyze-playhead-time">0.00 s</output></div>
+            <div class="analyze-plot-heading analyze-subheading"><h4>Waveform · drag chunk edges to change note length</h4><span id="analyze-wave-scale"></span></div>
+            <div id="analyze-wave-scroll" class="analyze-scroll"><div class="analyze-timeline"><canvas id="analyze-waveform" height="120" aria-label="Recorded waveform. Click or drag to seek."></canvas><div id="analyze-wave-chunks" class="analyze-wave-chunks"></div><div id="analyze-wave-now" class="analyze-now-line analyze-drag-playhead" role="slider" tabindex="0" aria-label="Playhead" aria-valuemin="0" aria-valuemax="0" aria-valuenow="0" aria-valuetext="0.00 seconds"></div></div></div>
+            <div class="analyze-plot-heading analyze-subheading"><h4>Detected notes</h4><span id="analyze-note-count"></span></div>
+            <div class="analyze-timeline-tools analyze-range-tools">
+              <label for="analyze-pitch-range">Pitch range</label><select id="analyze-pitch-range"><option value="all-2" selected>All notes · ±2</option><option value="all-12">All notes · ±12</option></select>
+              <label for="analyze-track-height">Detected notes height</label><input id="analyze-track-height" type="range" min="120" max="420" step="20" value="180"><span id="analyze-track-height-value">180 px</span>
+              <button class="button button-outline analyze-small-button" id="analyze-toggle-list" aria-expanded="false" aria-controls="analyze-note-list">Show note list</button>
+            </div>
+            <div id="analyze-note-scroll" class="analyze-scroll analyze-note-viewport"><div class="analyze-timeline"><div id="analyze-note-track"></div><div id="analyze-note-now" class="analyze-now-line" aria-hidden="true"></div></div></div>
+            <p class="analyze-edit-help">Click either timeline to seek. Drag notes vertically to change pitch; select one to split, merge, or adjust its boundaries.</p>
+            <div class="controls analyze-note-controls"><span id="analyze-selection">No note selected</span><button class="button button-outline" id="analyze-add-note" disabled>Add note at playhead</button><button class="button button-outline" id="analyze-split-note" disabled>Split at playhead</button><button class="button button-outline" id="analyze-merge-note" disabled>Merge with next</button></div>
+            <div class="controls analyze-note-controls"><button class="button button-outline" id="analyze-start-earlier" disabled>Start −0.02 s</button><button class="button button-outline" id="analyze-start-later" disabled>Start +0.02 s</button><button class="button button-outline" id="analyze-end-earlier" disabled>End −0.02 s</button><button class="button button-outline" id="analyze-end-later" disabled>End +0.02 s</button></div>
+            <div id="analyze-note-list" class="analyze-note-list hidden"></div>
+            <div class="controls analyze-note-controls"><button class="button button-outline" id="analyze-snap" disabled>Snap all to notes</button><button class="button button-outline" id="analyze-reset-notes" disabled>Clear pitch edits</button><button class="button button-primary" id="analyze-play-edited" disabled>▶ &nbsp; Play tuned voice</button><button class="button button-outline" id="analyze-download-edited" disabled>Download tuned WAV</button></div>
+            <div class="controls analyze-note-controls"><button class="button button-outline" id="analyze-play-notes" disabled>▶ &nbsp; Play detected notes</button><button class="button button-outline" id="analyze-play-both" disabled>▶ &nbsp; Play notes + original voice</button><button class="button button-outline" id="analyze-play-tuned-both" disabled>▶ &nbsp; Play notes + tuned voice</button><span id="analyze-note-playback-status" role="status"></span></div>
+            <p class="small-note">For a missed syllable such as “its,” seek to the gap and add a note, then adjust its length and pitch. Manual notes use a nearby pitch guess. Very short or unvoiced syllables may sound rough when pitch shifted.</p>
+          </div>
+          <div class="analyze-tempo-card"><span class="field-label">TEMPO</span><strong id="analyze-tempo-value">Tempo uncertain</strong><p id="analyze-tempo-detail" class="small-note"></p><div class="controls"><button class="button button-outline" id="analyze-tap-tempo">Tap beat</button><button class="button button-outline" id="analyze-reset-tempo">Use estimate</button><button class="button button-outline" id="analyze-download-abc" disabled>Download ABC</button><button class="button button-outline" id="analyze-download-midi" disabled>Download MIDI</button></div><p class="small-note">ABC rounds timings to sixteenth notes at the shown tempo. MIDI keeps the edited note timings.</p></div>
+        </div>
+      </section>
+
+      <section class="panel hidden" id="results-panel"><div class="panel-heading"><div><p class="kicker">YOUR DATA</p><h2>Results</h2><p>Use these simple measures to decide which exercises help. All data is stored locally in this browser.</p></div><button class="button button-outline" id="export-results">Export JSON</button></div><div id="summary" class="summary-grid"></div><div class="history-head"><h3>Recent attempts</h3><button class="text-button" id="clear-results">Clear results</button></div><div id="history" class="history"></div></section>
+    </main>
+    <footer>muSing Lab · Experimental practice tools · No account or cloud storage</footer>
+  </div>
+  <script type="module" src="/src/app.js"></script>
+</body>
+</html>
