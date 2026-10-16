@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { timelineX, timeGridSeconds, waveformEnvelope, noteTrackLayout } from '../src/analyze-voice.js';
+import { timelineX, timeGridSeconds, waveformEnvelope, noteTrackLayout, pianoKeyRows } from '../src/analyze-voice.js';
 
 test('waveform, note blocks, and playhead share the same time coordinates', () => {
   assert.equal(timelineX(0, 4), 43);
@@ -33,4 +33,15 @@ test('note rows fit the selected height with the lowest and highest pitches visi
   assert.equal(compact.headerHeight + (compact.high - compact.low + 1) * compact.rowHeight, compact.height);
   assert.ok(tall.rowHeight > compact.rowHeight);
   assert.equal(tall.height, 420);
+});
+
+test('piano keys share the note track pitch rows exactly', () => {
+  const notes = [{ midi: 60, start: 0, end: 1 }, { midi: 64, start: 1, end: 2 }];
+  const layout = noteTrackLayout(notes, 'all-2', null, 180);
+  const rows = pianoKeyRows(notes, 'all-2', null, 180);
+  assert.equal(rows.length, layout.high - layout.low + 1);
+  assert.equal(rows[0].y, layout.headerHeight);
+  assert.equal(rows.at(-1).y + rows.at(-1).height, layout.height);
+  assert.equal(rows.find(row => row.midi === 61).black, true);
+  assert.equal(rows.find(row => row.midi === 60).black, false);
 });

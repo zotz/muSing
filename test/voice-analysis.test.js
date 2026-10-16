@@ -26,6 +26,31 @@ test('analyzes a solo phrase and selects the active stereo input channel', async
   assert.ok(result.notes.every(note => note.end > note.start));
 });
 
+test('short amplitude windows refine a clear attack and release', async () => {
+  const sampleRate = 48000;
+  const duration = 0.7;
+  const voice = Float32Array.from({ length: sampleRate * duration }, (_, index) => {
+    const time = index / sampleRate;
+    return time >= 0.2 && time < 0.4 ? 0.22 * Math.sin(2 * Math.PI * 220 * time) : 0;
+  });
+  const result = await analyzeVoiceBuffer({ sampleRate, duration, numberOfChannels: 1, getChannelData() { return voice; } });
+  assert.ok(Math.abs(result.notes[0].start - 0.2) <= 0.01);
+  assert.ok(Math.abs(result.notes[0].end - 0.4) <= 0.01);
+});
+
+test('a short quiet articulation can split repeated pitches', async () => {
+  const sampleRate = 48000;
+  const duration = 1;
+  const voice = Float32Array.from({ length: sampleRate * duration }, (_, index) => {
+    const time = index / sampleRate;
+    const level = Math.abs(time - 0.45) < 0.01 ? 0.01 : 0.22;
+    return level * Math.sin(2 * Math.PI * 164.81 * time);
+  });
+  const result = await analyzeVoiceBuffer({ sampleRate, duration, numberOfChannels: 1, getChannelData() { return voice; } });
+  assert.equal(result.notes.length, 2);
+  assert.ok(Math.abs(result.notes[0].end - 0.45) <= 0.02);
+});
+
 test('keeps short, distinct sung notes in the note track', async () => {
   const sampleRate = 48000;
   const notes = [

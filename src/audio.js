@@ -160,6 +160,142 @@ export async function playAudioBuffer(recordingBuffer, startOffset = 0, speed = 
   };
 }
 
+export async function playClickTrack(times, recordingBuffer = null, speed = 1, startOffset = 0) {
+  const upcoming = times.filter(time => time >= startOffset);
+  if (!upcoming.length && !recordingBuffer) return null;
+  const audio = await audioContext();
+  const beginning = audio.currentTime + 0.06;
+  const duration = Math.max(recordingBuffer?.duration ?? 0, (times.at(-1) ?? 0) + 0.05);
+  const master = audio.createGain();
+  master.connect(audio.destination);
+  const sources = [];
+  let remaining = upcoming.length + (recordingBuffer ? 1 : 0);
+  let finished = false;
+  let resolveDone;
+  const done = new Promise(resolve => { resolveDone = resolve; });
+  const finish = () => {
+    if (finished) return;
+    finished = true;
+    master.disconnect();
+    resolveDone();
+  };
+  const ended = source => {
+    source.disconnect();
+    if (--remaining === 0) finish();
+  };
+  if (recordingBuffer) {
+    const voice = audio.createBufferSource();
+    voice.buffer = bufferAtSpeed(audio, recordingBuffer, speed);
+    voice.connect(master);
+    voice.onended = () => ended(voice);
+    voice.start(beginning, startOffset / speed);
+    sources.push(voice);
+  }
+  for (const time of upcoming) {
+    const start = beginning + (time - startOffset) / speed;
+    const click = audio.createOscillator();
+    const envelope = audio.createGain();
+    click.type = 'triangle';
+    click.frequency.value = 1400;
+    envelope.gain.setValueAtTime(0.22, start);
+    envelope.gain.exponentialRampToValueAtTime(0.0001, start + 0.035);
+    click.connect(envelope).connect(master);
+    click.onended = () => { envelope.disconnect(); ended(click); };
+    click.start(start);
+    click.stop(start + 0.04);
+    sources.push(click);
+  }
+  return {
+    done,
+    currentTime() { return Math.min(duration, Math.max(startOffset, startOffset + (audio.currentTime - beginning) * speed)); },
+    stop() {
+      if (finished) return;
+      for (const source of sources) {
+        try { source.stop(); } catch { /* Source already stopped. */ }
+      }
+      finish();
+    }
+  };
+}
+
+export async function playAudioChunk({ start, end, recordingBuffer = null, notes = [], clicks = [], speed = 1 }) {
+  if (!(end > start) || !(speed > 0)) return null;
+  const audio = await audioContext();
+  const beginning = audio.currentTime + 0.04;
+  const duration = (end - start) / speed;
+  const master = audio.createGain();
+  master.gain.value = recordingBuffer ? 0.65 : 0.8;
+  master.connect(audio.destination);
+  const sources = [];
+  let finished = false;
+  let resolveDone;
+  const done = new Promise(resolve => { resolveDone = resolve; });
+  let timer;
+  const finish = () => {
+    if (finished) return;
+    finished = true;
+    clearTimeout(timer);
+    for (const source of sources) {
+      try { source.stop(); } catch { /* Already ended. */ }
+      source.disconnect();
+    }
+    master.disconnect();
+    resolveDone();
+  };
+  if (recordingBuffer) {
+    const voice = audio.createBufferSource();
+    voice.buffer = bufferAtSpeed(audio, recordingBuffer, speed);
+    voice.connect(master);
+    voice.start(beginning, start / speed, duration);
+    sources.push(voice);
+  }
+  for (const note of notes) {
+    const noteStart = Math.max(start, note.start);
+    const noteEnd = Math.min(end, note.end);
+    if (noteEnd <= noteStart || !Number.isFinite(note.midi)) continue;
+    const from = beginning + (noteStart - start) / speed;
+    const length = (noteEnd - noteStart) / speed;
+    const attack = Math.min(0.01, length / 3);
+    const envelope = audio.createGain();
+    envelope.gain.setValueAtTime(0.0001, from);
+    envelope.gain.linearRampToValueAtTime(0.22, from + attack);
+    envelope.gain.setValueAtTime(0.22, from + Math.max(attack, length - 0.02));
+    envelope.gain.linearRampToValueAtTime(0.0001, from + length);
+    envelope.connect(master);
+    const oscillator = audio.createOscillator();
+    oscillator.type = 'sine';
+    oscillator.frequency.value = midiToHz(note.midi);
+    oscillator.connect(envelope);
+    oscillator.onended = () => envelope.disconnect();
+    oscillator.start(from);
+    oscillator.stop(from + length);
+    sources.push(oscillator);
+  }
+  for (const clickTime of clicks) {
+    if (clickTime < start || clickTime >= end) continue;
+    const from = beginning + (clickTime - start) / speed;
+    const length = Math.min(0.04, beginning + duration - from);
+    const envelope = audio.createGain();
+    envelope.gain.setValueAtTime(0.22, from);
+    envelope.gain.exponentialRampToValueAtTime(0.0001, from + length);
+    envelope.connect(master);
+    const oscillator = audio.createOscillator();
+    oscillator.type = 'triangle';
+    oscillator.frequency.value = 1400;
+    oscillator.connect(envelope);
+    oscillator.onended = () => envelope.disconnect();
+    oscillator.start(from);
+    oscillator.stop(from + length);
+    sources.push(oscillator);
+  }
+  timer = setTimeout(finish, (duration + 0.04) * 1000);
+  return {
+    done,
+    currentTime() { return Math.min(end, Math.max(start, start + (audio.currentTime - beginning) * speed)); },
+    stop: finish
+  };
+}
+
 export async function playScrubCue(recordingBuffer, note, seconds, mode = 'voice') {
   if (mode === 'off' || (mode === 'note' && !note)) return null;
   const audio = await audioContext();

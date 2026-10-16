@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { playPianoMelody, playAudioBuffer } from '../src/audio.js';
+import { playPianoMelody, playAudioBuffer, playClickTrack, playAudioChunk } from '../src/audio.js';
 
 test('schedules piano notes and recording on the same timeline', async () => {
   let context;
@@ -10,6 +10,7 @@ test('schedules piano notes and recording on the same timeline', async () => {
   }
   class Parameter {
     setValueAtTime() {}
+    linearRampToValueAtTime() {}
     exponentialRampToValueAtTime() {}
     cancelScheduledValues() {}
     setTargetAtTime() {}
@@ -29,13 +30,13 @@ test('schedules piano notes and recording on the same timeline', async () => {
     }
     createOscillator() {
       const oscillator = Object.assign(new Node(), {
-        frequency: { value: 0 }, start(time) { this.startTime = time; }, stop() {}
+        frequency: { value: 0 }, start(time) { this.startTime = time; }, stop(time) { this.stopTime = time; }
       });
       this.oscillators.push(oscillator);
       return oscillator;
     }
     createBufferSource() {
-      this.recording = Object.assign(new Node(), { start(time, offset) { this.startTime = time; this.offset = offset; }, stop() {} });
+      this.recording = Object.assign(new Node(), { start(time, offset, duration) { this.startTime = time; this.offset = offset; this.playDuration = duration; }, stop() {} });
       return this.recording;
     }
   }
@@ -62,6 +63,22 @@ test('schedules piano notes and recording on the same timeline', async () => {
     assert.equal(context.recording.offset, 0.5);
     assert.equal(context.recording.buffer.duration, 2);
     assert.ok(Math.abs(slowVoice.currentTime() - 0.25) < 1e-9);
+    const clickStart = context.currentTime + 0.06;
+    const clicks = await playClickTrack([0.2, 0.6], phrase);
+    assert.equal(context.recording.startTime, clickStart);
+    assert.ok(Math.abs(context.oscillators.at(-2).startTime - clickStart - 0.2) < 1e-9);
+    assert.ok(Math.abs(context.oscillators.at(-1).startTime - clickStart - 0.6) < 1e-9);
+    clicks.stop();
+    const chunk = await playAudioChunk({ start: 0.5, end: 1.25, recordingBuffer: phrase,
+      notes: [{ start: 0.25, end: 0.75, midi: 60 }, { start: 1.1, end: 1.5, midi: 62 }],
+      clicks: [0.5, 1.25], speed: 1 });
+    assert.equal(context.recording.offset, 0.5);
+    assert.equal(context.recording.playDuration, 0.75);
+    assert.equal(context.oscillators.at(-3).startTime, context.recording.startTime);
+    assert.ok(Math.abs(context.oscillators.at(-2).stopTime - (context.recording.startTime + 0.75)) < 1e-9);
+    assert.equal(context.oscillators.at(-1).frequency.value, 1400);
+    chunk.stop();
+    await chunk.done;
   } finally {
     delete globalThis.AudioContext;
   }

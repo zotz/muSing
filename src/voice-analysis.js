@@ -4,6 +4,77 @@ import { hzToMidi, median } from './music.js';
 const HOP_SECONDS = 0.04;
 const FRAME_SIZE = 1024;
 
+// A short amplitude envelope locates attacks and releases more precisely than
+// the longer windows needed to estimate a sung pitch.
+export function amplitudeEnvelope(samples, sampleRate) {
+  const size = Math.max(1, Math.round(sampleRate * 0.01));
+  const levels = [];
+  for (let offset = 0; offset < samples.length; offset += size) {
+    let energy = 0;
+    const end = Math.min(samples.length, offset + size);
+    for (let index = offset; index < end; index++) energy += samples[index] ** 2;
+    levels.push(Math.sqrt(energy / (end - offset)));
+  }
+  return { levels, secondsPerBin: size / sampleRate };
+}
+
+function refineNoteBoundaries(notes, envelope, duration) {
+  const { levels, secondsPerBin: step } = envelope;
+  const crossing = (time, direction) => {
+    const at = Math.round(time / step);
+    const lo = Math.max(1, at - Math.ceil(0.07 / step));
+    const hi = Math.min(levels.length - 1, at + Math.ceil(0.07 / step));
+    const peak = Math.max(...levels.slice(lo, hi + 1), 0);
+    const threshold = Math.max(0.012, peak * 0.18);
+    if (direction === 'start' && time <= 0.07 && levels[0] >= threshold) return 0;
+    if (direction === 'end' && duration - time <= 0.07 && levels.at(-1) >= threshold) return duration;
+    let closest = null;
+    for (let index = lo; index <= hi; index++) {
+      const isCrossing = direction === 'start'
+        ? levels[index - 1] < threshold && levels[index] >= threshold
+        : levels[index - 1] >= threshold && levels[index] < threshold;
+      if (isCrossing && (closest == null || Math.abs(index - at) < Math.abs(closest - at))) closest = index;
+    }
+    return closest == null ? time : Math.max(0, Math.min(duration, closest * step));
+  };
+  const refined = notes.map(note => {
+    const start = crossing(note.start, 'start');
+    const end = crossing(note.end, 'end');
+    return end - start >= 0.04 ? { ...note, start, end } : { ...note };
+  });
+  for (let index = 0; index + 1 < refined.length; index++) {
+    if (refined[index].end > refined[index + 1].start) {
+      const boundary = (refined[index].end + refined[index + 1].start) / 2;
+      refined[index].end = boundary;
+      refined[index + 1].start = boundary;
+    }
+  }
+  const smoothed = levels.map((level, index) => (level + (levels[index - 1] ?? level) + (levels[index + 1] ?? level)) / 3);
+  const split = [];
+  for (const note of refined) {
+    const cuts = [];
+    const first = Math.ceil((note.start + 0.08) / step);
+    const last = Math.floor((note.end - 0.08) / step);
+    for (let index = first; index <= last; index++) {
+      const level = smoothed[index];
+      if (level > smoothed[index - 1] || level > smoothed[index + 1]) continue;
+      const before = Math.max(...smoothed.slice(Math.max(0, index - 8), index), 0);
+      const after = Math.max(...smoothed.slice(index + 1, Math.min(smoothed.length, index + 9)), 0);
+      if (Math.min(before, after) < 0.025 || level > Math.min(before, after) * 0.55) continue;
+      const time = index * step;
+      if (time - (cuts.at(-1) ?? note.start) < 0.08) continue;
+      cuts.push(time);
+    }
+    let start = note.start;
+    for (const cut of cuts) {
+      split.push({ ...note, start, end: cut });
+      start = cut;
+    }
+    split.push({ ...note, start });
+  }
+  return split;
+}
+
 function articulationFrames(frames) {
   const boundaries = new Set();
   let previous = -Infinity;
@@ -125,5 +196,6 @@ export async function analyzeVoiceBuffer(buffer, onProgress = () => {}, isCancel
   }
   if (isCancelled()) return null;
   onProgress(1);
-  return { channel, duration: buffer.duration, frames, notes: segmentPitchFrames(frames, buffer.duration) };
+  const notes = refineNoteBoundaries(segmentPitchFrames(frames, buffer.duration), amplitudeEnvelope(channel, buffer.sampleRate), buffer.duration);
+  return { channel, duration: buffer.duration, frames, notes };
 }

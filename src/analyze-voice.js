@@ -1,10 +1,13 @@
 import { hzToMidi, midiToName } from './music.js';
 import { analyzeVoiceBuffer } from './voice-analysis.js';
-import { playPianoMelody, playAudioBuffer, playScrubCue } from './audio.js';
+import { playPianoMelody, playAudioBuffer, playClickTrack, playAudioChunk, playScrubCue } from './audio.js';
 import { estimateNotePulse, tappedBpm } from './tempo.js';
 import { notesToAbc, notesToMidi } from './note-export.js';
 import { MAX_NOTE_SHIFT, renderEditedChannels, encodeWav } from './voice-edit.js';
 import { resizeNote, splitNote, mergeWithNext, addNoteInGap, noteAtTime, visiblePitchRange } from './note-edit.js';
+import { alignedMarkers, notesFromMarkers } from './note-markers.js';
+import { quietEdgeBounds, cropTimedNotes } from './audio-trim.js';
+import { chunkRanges } from './chunk-playback.js';
 
 const SVG = 'http://www.w3.org/2000/svg';
 const TIMELINE_LEFT = 43;
@@ -69,6 +72,30 @@ export function noteTrackLayout(notes, rangeMode, selectedNote, trackHeight) {
   return { low, high, headerHeight, rowHeight, height: trackHeight };
 }
 
+export function pianoKeyRows(notes, rangeMode, selectedNote, trackHeight) {
+  const { low, high, headerHeight, rowHeight } = noteTrackLayout(notes, rangeMode, selectedNote, trackHeight);
+  return Array.from({ length: high - low + 1 }, (_, index) => {
+    const midi = high - index;
+    return { midi, y: headerHeight + index * rowHeight, height: rowHeight, black: [1, 3, 6, 8, 10].includes((midi + 120) % 12) };
+  });
+}
+
+function drawPianoKeyboard(container, notes, rangeMode, selectedNote, trackHeight) {
+  container.replaceChildren();
+  const svg = document.createElementNS(SVG, 'svg');
+  svg.setAttribute('width', TIMELINE_LEFT);
+  svg.setAttribute('height', trackHeight);
+  svg.setAttribute('viewBox', `0 0 ${TIMELINE_LEFT} ${trackHeight}`);
+  svg.setAttribute('role', 'img');
+  svg.setAttribute('aria-label', 'Piano keys aligned with the note rows');
+  addSvg(svg, 'rect', { x: 0, y: 0, width: TIMELINE_LEFT, height: trackHeight, fill: '#13212b' });
+  for (const row of pianoKeyRows(notes, rangeMode, selectedNote, trackHeight)) {
+    addSvg(svg, 'rect', { x: 0, y: row.y, width: row.black ? 30 : TIMELINE_LEFT, height: row.height, fill: row.black ? '#253137' : '#e9eee4', stroke: row.black ? '#66777a' : '#8e9d96', 'stroke-width': 0.7 });
+    if (row.height >= 11) addSvg(svg, 'text', { x: 3, y: row.y + row.height / 2 + Math.min(3.5, row.height * 0.27), fill: row.black ? '#e9eee4' : '#26352e', 'font-size': Math.min(10, row.height * 0.65), 'font-weight': row.midi % 12 === 0 ? 700 : 500 }, midiToName(row.midi));
+  }
+  container.append(svg);
+}
+
 function drawWaveform(canvas, samples, duration, zoom) {
   const graphWidth = plotWidth(duration, zoom);
   const width = graphWidth + TIMELINE_LEFT;
@@ -119,9 +146,6 @@ function drawNotes(container, list, notes, duration, zoom, rangeMode, trackHeigh
   for (let midi = low; midi <= high; midi++) {
     const y = headerHeight + (high - midi) * rowHeight;
     addSvg(svg, 'line', { x1: TIMELINE_LEFT, x2: width, y1: y + rowHeight, y2: y + rowHeight, stroke: '#2a3c46' });
-    if (rowHeight >= 13 || midi === low || midi === high) {
-      addSvg(svg, 'text', { x: 5, y: y + rowHeight / 2 + 3, fill: '#9bb2b2', 'font-size': rowHeight >= 13 ? 11 : 9 }, midiToName(midi));
-    }
   }
   for (const second of timeGridSeconds(duration)) {
     const x = Math.round(timelineX(second, duration, zoom)) + 0.5;
@@ -285,6 +309,38 @@ export function initAnalyzeVoice() {
   const noteScroll = el('analyze-note-scroll');
   const waveCanvas = el('analyze-waveform');
   const waveChunks = el('analyze-wave-chunks');
+  const tapMarkers = el('analyze-tap-markers');
+  const chunkSource = el('analyze-chunk-source');
+  const chunkVoice = el('analyze-chunk-voice');
+  const chunkNotes = el('analyze-chunk-notes');
+  const chunkClicks = el('analyze-chunk-clicks');
+  const chunkAuto = el('analyze-chunk-auto');
+  const chunkPrev = el('analyze-chunk-prev');
+  const chunkPlay = el('analyze-chunk-play');
+  const chunkNext = el('analyze-chunk-next');
+  const chunkPosition = el('analyze-chunk-position');
+  const chunkStatus = el('analyze-chunk-status');
+  const chunkHighlight = el('analyze-chunk-highlight');
+  const trimQuietButton = el('analyze-trim-quiet');
+  const trimStartButton = el('analyze-trim-start');
+  const trimEndButton = el('analyze-trim-end');
+  const trimRestoreButton = el('analyze-trim-restore');
+  const trimStatus = el('analyze-trim-status');
+  const tapsStartButton = el('analyze-taps-start');
+  const tapsStopButton = el('analyze-taps-stop');
+  const tapsClearButton = el('analyze-taps-clear');
+  const tapsApplyButton = el('analyze-taps-apply');
+  const tapsRestoreButton = el('analyze-taps-restore');
+  const tapsShift = el('analyze-taps-shift');
+  const tapsShiftNumber = el('analyze-taps-shift-number');
+  const tapsStatus = el('analyze-taps-status');
+  const tapKeyButton = el('analyze-tap-key');
+  const tapKeyLabel = el('analyze-tap-key-label');
+  const tapsWithVoice = el('analyze-taps-with-voice');
+  const tapsGuideVoice = el('analyze-taps-guide-voice');
+  const tapsPlayButton = el('analyze-taps-play');
+  const tapsPlayVoiceButton = el('analyze-taps-play-voice');
+  const tapsPlayStatus = el('analyze-taps-play-status');
   const nowLines = [el('analyze-wave-now'), el('analyze-note-now')];
   const tapTempoButton = el('analyze-tap-tempo');
   const resetTempoButton = el('analyze-reset-tempo');
@@ -314,6 +370,8 @@ export function initAnalyzeVoice() {
   let preparingMelody = false;
   let scrubCue = null;
   let scrubToken = 0;
+  let pitchCue = null;
+  let pitchCueToken = 0;
   let lastCueAt = -Infinity;
   let draggingPlayhead = false;
   let dragFrame = null;
@@ -321,6 +379,240 @@ export function initAnalyzeVoice() {
   let estimatedBpm = null;
   let manualBpm = null;
   let tempoTaps = [];
+  let noteTaps = [];
+  let tapPassStartedAt = null;
+  let tapShift = 0;
+  let tapAnchor = 0;
+  let automaticNotes = [];
+  let originalBlob = null;
+  let fullTakeState = null;
+  let tapCaptureMode = 'separate';
+  let choosingTapKey = false;
+  let tapKeyCode = 'KeyT';
+  let tapKeyName = 'T';
+  let clickPlayback = null;
+  let clickPlaybackToken = 0;
+  let chunkIndex = 0;
+  let chunkPlayback = null;
+  let chunkPlaybackToken = 0;
+  let guidePlayback = null;
+  let guideToken = 0;
+  try {
+    const saved = JSON.parse(localStorage.getItem('musing-analyze-tap-key'));
+    if (saved && typeof saved.code === 'string' && typeof saved.name === 'string') {
+      tapKeyCode = saved.code;
+      tapKeyName = saved.name;
+    }
+  } catch { /* Browser storage may be unavailable. */ }
+  tapKeyLabel.textContent = `Tap key: ${tapKeyName}`;
+
+  function endTapKeyChoice() {
+    choosingTapKey = false;
+    tapKeyButton.textContent = 'Click to set tap key';
+    tapKeyLabel.textContent = `Tap key: ${tapKeyName}`;
+  }
+
+  function markerPositions() { return alignedMarkers(noteTaps, tapAnchor, tapShift, timelineDuration); }
+
+  function selectedChunks() { return chunkRanges(chunkSource.value, detectedNotes, markerPositions(), timelineDuration); }
+
+  function updateChunkControls() {
+    const ranges = selectedChunks();
+    chunkIndex = Math.max(0, Math.min(chunkIndex, ranges.length - 1));
+    const range = ranges[chunkIndex];
+    const hasSound = chunkVoice.value !== 'none' || chunkNotes.checked || chunkClicks.checked;
+    chunkPrev.disabled = !range || chunkIndex === 0;
+    chunkNext.disabled = !range || chunkIndex === ranges.length - 1;
+    chunkPlay.disabled = !range || !hasSound || !decodedBuffer;
+    chunkPosition.textContent = range ? `${range.label} · ${chunkIndex + 1}/${ranges.length} · ${range.start.toFixed(2)}–${range.end.toFixed(2)} s` : 'No chunks for this source';
+    chunkHighlight.style.display = range ? 'block' : 'none';
+    if (range) {
+      chunkHighlight.style.left = `${timelineX(range.start, timelineDuration, zoom)}px`;
+      chunkHighlight.style.width = `${Math.max(2, timelineX(range.end, timelineDuration, zoom) - timelineX(range.start, timelineDuration, zoom))}px`;
+    }
+  }
+
+  function stopChunkPlayback(message = '') {
+    chunkPlaybackToken++;
+    if (chunkPlayback) audio.currentTime = Math.min(timelineDuration, chunkPlayback.currentTime());
+    chunkPlayback?.stop();
+    chunkPlayback = null;
+    chunkPlay.textContent = '▶ Play chunk';
+    chunkStatus.textContent = message;
+    updateChunkControls();
+    if (audio.paused && !melodyPlayback && !clickPlayback) stopPlayheadLoop();
+  }
+
+  async function playSelectedChunk() {
+    if (chunkPlayback) { stopChunkPlayback('Chunk playback stopped.'); return; }
+    const range = selectedChunks()[chunkIndex];
+    if (!range || !decodedBuffer || chunkPlay.disabled) return;
+    stopClickPlayback();
+    stopMelody();
+    audio.pause();
+    scrubToken++;
+    scrubCue?.stop();
+    const token = ++chunkPlaybackToken;
+    chunkPlay.disabled = true;
+    chunkStatus.textContent = 'Preparing chunk…';
+    try {
+      const playback = await playAudioChunk({
+        start: range.start, end: range.end,
+        recordingBuffer: chunkVoice.value === 'tuned' ? getEditedBuffer() : chunkVoice.value === 'original' ? decodedBuffer : null,
+        notes: chunkNotes.checked ? detectedNotes.map(note => ({ ...note, midi: note.targetMidi ?? note.midi })) : [],
+        clicks: chunkClicks.checked ? markerPositions() : [],
+        speed: Number(speedSelect.value)
+      });
+      if (token !== chunkPlaybackToken || !active) { playback?.stop(); return; }
+      chunkPlayback = playback;
+      chunkPlay.disabled = false;
+      chunkPlay.textContent = '■ Stop chunk';
+      chunkStatus.textContent = `Playing ${range.label.toLowerCase()}.`;
+      if (playheadFrame == null) playheadFrame = requestAnimationFrame(animatePlayhead);
+      playback.done.then(() => {
+        if (chunkPlayback === playback) {
+          audio.currentTime = range.end;
+          chunkPlayback = null;
+          chunkPlay.textContent = '▶ Play chunk';
+          chunkStatus.textContent = 'Chunk finished.';
+          stopPlayheadLoop();
+        }
+      });
+    } catch (error) {
+      if (token === chunkPlaybackToken) chunkStatus.textContent = `Could not play chunk: ${error.message || error.name}.`;
+    } finally {
+      if (token === chunkPlaybackToken) updateChunkControls();
+    }
+  }
+
+  function stepChunk(direction) {
+    stopChunkPlayback();
+    chunkIndex = Math.max(0, Math.min(selectedChunks().length - 1, chunkIndex + direction));
+    updateChunkControls();
+    const range = selectedChunks()[chunkIndex];
+    if (!range) return;
+    audio.currentTime = range.start;
+    updatePlayhead();
+    if (chunkAuto.checked) void playSelectedChunk();
+  }
+
+  chunkPrev.addEventListener('click', () => stepChunk(-1));
+  chunkNext.addEventListener('click', () => stepChunk(1));
+  chunkPlay.addEventListener('click', () => void playSelectedChunk());
+  chunkSource.addEventListener('change', () => { stopChunkPlayback(); chunkIndex = 0; updateChunkControls(); });
+  for (const option of [chunkVoice, chunkNotes, chunkClicks]) option.addEventListener('change', () => { stopChunkPlayback(); updateChunkControls(); });
+
+  function updateTapControls() {
+    const hasTaps = noteTaps.length > 0;
+    const canAlign = hasTaps && Boolean(decodedBuffer);
+    tapsClearButton.disabled = !hasTaps && tapPassStartedAt == null;
+    tapsApplyButton.disabled = !canAlign || tapPassStartedAt != null;
+    tapsRestoreButton.disabled = !decodedBuffer;
+    tapsShift.disabled = !canAlign;
+    tapsShiftNumber.disabled = !canAlign;
+    tapsPlayButton.disabled = !hasTaps || tapPassStartedAt != null || recorder?.state === 'recording';
+    tapsPlayVoiceButton.disabled = !canAlign || tapPassStartedAt != null || recorder?.state === 'recording';
+    tapsGuideVoice.disabled = !hasTaps || tapsWithVoice.checked || recorder?.state === 'recording';
+    if (!hasTaps || tapsWithVoice.checked) tapsGuideVoice.checked = false;
+    el('analyze-taps-align-help').textContent = tapCaptureMode === 'live'
+      ? 'Live taps keep their recording times until shifted.'
+      : 'First tap starts at the first detected note until shifted.';
+    tapsShift.value = String(Math.max(-3, Math.min(3, tapShift)));
+    tapsShiftNumber.value = tapShift.toFixed(2);
+    if (!decodedBuffer) { updateChunkControls(); return; }
+    tapMarkers.replaceChildren();
+    markerPositions().forEach((time, index) => {
+      const marker = document.createElement('div');
+      marker.className = 'analyze-tap-marker';
+      marker.style.left = `${timelineX(time, timelineDuration, zoom)}px`;
+      marker.title = `Tap ${index + 1}: ${time.toFixed(2)} s`;
+      tapMarkers.append(marker);
+    });
+    updateChunkControls();
+  }
+
+  function stopTapPass() {
+    if (tapPassStartedAt == null) return;
+    tapPassStartedAt = null;
+    tapsStartButton.disabled = false;
+    tapKeyButton.disabled = false;
+    tapsStopButton.disabled = true;
+    speedSelect.disabled = false;
+    if (!audio.paused) audio.pause();
+    audio.playbackRate = Number(speedSelect.value);
+    tapsStatus.textContent = noteTaps.length ? `${noteTaps.length} note-start taps captured. Align them after analysis.` : 'No taps captured. Start another tap pass.';
+    updateTapControls();
+  }
+
+  tapsStartButton.addEventListener('click', async () => {
+    if (recorder?.state === 'recording' || tapPassStartedAt != null) return;
+    endTapKeyChoice();
+    noteTaps = [];
+    tapCaptureMode = 'separate';
+    if (decodedBuffer) tapAnchor = automaticNotes[0]?.start ?? 0;
+    tapShift = 0;
+    stopClickPlayback();
+    stopGuidePlayback();
+    tapsStartButton.disabled = true;
+    tapKeyButton.disabled = true;
+    tapsStopButton.disabled = false;
+    speedSelect.disabled = true;
+    tapPassStartedAt = performance.now();
+    if (blob) {
+      audio.currentTime = 0;
+      audio.playbackRate = 1;
+      try { await audio.play(); } catch { /* Tapping can still be done without playback. */ }
+    }
+    if (tapPassStartedAt == null) return;
+    tapsStatus.textContent = `Tap ${tapKeyName} once per note start, then stop the pass.`;
+    updateTapControls();
+  });
+  tapsStopButton.addEventListener('click', stopTapPass);
+  tapsClearButton.addEventListener('click', () => {
+    stopTapPass();
+    stopClickPlayback();
+    noteTaps = [];
+    tapShift = 0;
+    tapsStatus.textContent = 'No taps recorded.';
+    updateTapControls();
+  });
+  tapsWithVoice.addEventListener('change', updateTapControls);
+  tapKeyButton.addEventListener('click', () => {
+    choosingTapKey = true;
+    tapKeyButton.textContent = 'Press a key…';
+    tapKeyLabel.textContent = 'Press the key you want to use. Escape cancels.';
+  });
+  document.addEventListener('keydown', event => {
+    if (!active) return;
+    if (choosingTapKey) {
+      event.preventDefault();
+      if (event.code !== 'Escape' && !['Shift', 'Control', 'Alt', 'Meta', 'Tab'].includes(event.key)) {
+        tapKeyCode = event.code;
+        tapKeyName = event.key === ' ' ? 'Space' : event.key.length === 1 ? event.key.toUpperCase() : event.key;
+        try { localStorage.setItem('musing-analyze-tap-key', JSON.stringify({ code: tapKeyCode, name: tapKeyName })); } catch { /* Session setting still works. */ }
+      }
+      endTapKeyChoice();
+      return;
+    }
+    const live = tapCaptureMode === 'live' && recorder?.state === 'recording';
+    if ((tapPassStartedAt == null && !live) || event.code !== tapKeyCode) return;
+    if (event.target instanceof HTMLElement && (event.target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(event.target.tagName))) return;
+    event.preventDefault();
+    if (event.repeat) return;
+    noteTaps.push((performance.now() - (live ? startedAt : tapPassStartedAt)) / 1000);
+    tapsStatus.textContent = `${noteTaps.length} ${noteTaps.length === 1 ? 'tap' : 'taps'} captured.`;
+    updateTapControls();
+  });
+  const setTapShift = value => {
+    const next = Number(value);
+    if (!Number.isFinite(next)) return;
+    tapShift = Math.max(-120, Math.min(120, next));
+    if (chunkPlayback) stopChunkPlayback();
+    stopClickPlayback();
+    updateTapControls();
+  };
+  tapsShift.addEventListener('input', () => setTapShift(tapsShift.value));
+  tapsShiftNumber.addEventListener('change', () => setTapShift(tapsShiftNumber.value));
 
   function updateTempoDisplay() {
     el('analyze-tempo-value').textContent = manualBpm ? `${manualBpm} BPM · tapped` : estimatedBpm ? `About ${estimatedBpm} BPM` : 'Tempo uncertain';
@@ -376,8 +668,28 @@ export function initAnalyzeVoice() {
     }
   }
 
+  function stopPitchCue() {
+    pitchCueToken++;
+    pitchCue?.stop();
+    pitchCue = null;
+  }
+
+  async function auditionPitch(midi) {
+    stopPitchCue();
+    const token = pitchCueToken;
+    try {
+      const cue = await playScrubCue(null, { midi }, 0, 'note');
+      if (token !== pitchCueToken || !active) cue?.stop();
+      else pitchCue = cue;
+    } catch (error) {
+      if (token === pitchCueToken) notePlaybackStatus.textContent = `Pitch preview unavailable: ${error.name || 'audio error'}.`;
+    }
+  }
+
   function seekTo(seconds, forceCue = false) {
     if (!decodedBuffer) return;
+    if (chunkPlayback) stopChunkPlayback();
+    if (clickPlayback) stopClickPlayback();
     if (!audio.paused) audio.pause();
     if (melodyPlayback || preparingMelody) stopMelody();
     const position = Math.max(0, Math.min(timelineDuration, seconds));
@@ -396,15 +708,140 @@ export function initAnalyzeVoice() {
     if (!decodedBuffer || !waveSamples) return;
     const envelope = drawWaveform(waveCanvas, waveSamples, timelineDuration, zoom);
     el('analyze-wave-scale').textContent = envelope.peak < 0.0005 ? 'Signal nearly silent' : envelope.gain > 1.1 ? `Display amplified ×${envelope.gain < 10 ? envelope.gain.toFixed(1) : Math.round(envelope.gain)}; audio unchanged` : 'Original amplitude';
+    drawPianoKeyboard(el('analyze-piano-keyboard'), detectedNotes, pitchRangeSelect.value, selectedNote, Number(trackHeightSlider.value));
     drawNotes(el('analyze-note-track'), noteList, detectedNotes, timelineDuration, zoom, pitchRangeSelect.value, Number(trackHeightSlider.value), onNoteEdit, selectNote, seekFromClientX, renderTimeline, selectedNote);
     drawWaveChunks(waveChunks, detectedNotes, timelineDuration, zoom, selectedNote, selectNote, seekFromClientX, onBoundaryEdit, renderTimeline);
+    updateTapControls();
     el('analyze-note-count').textContent = `${detectedNotes.length} ${detectedNotes.length === 1 ? 'note' : 'notes'}`;
     syncSelection();
     updatePlayhead();
   }
 
+  function showRecordingBlob(nextBlob) {
+    audio.pause();
+    if (audioUrl) URL.revokeObjectURL(audioUrl);
+    blob = nextBlob;
+    audioUrl = URL.createObjectURL(blob);
+    audio.src = audioUrl;
+    audio.load();
+    audio.playbackRate = Number(speedSelect.value);
+    audio.preservesPitch = true;
+  }
+
+  function snapshotFullTake() {
+    if (fullTakeState) return;
+    fullTakeState = {
+      buffer: decodedBuffer,
+      samples: waveSamples,
+      notes: detectedNotes.map(note => ({ ...note })),
+      automaticNotes: automaticNotes.map(note => ({ ...note })),
+      frames: analysisFrames.map(frame => ({ ...frame })),
+      tapAnchor, tapShift, noteTaps: [...noteTaps], tapCaptureMode,
+      estimatedBpm, manualBpm, tempoTaps: [...tempoTaps]
+    };
+  }
+
+  function applyTrim(start, end) {
+    if (!decodedBuffer) return;
+    stopChunkPlayback();
+    const rate = decodedBuffer.sampleRate;
+    const first = Math.max(0, Math.floor(start * rate));
+    const last = Math.min(decodedBuffer.length, Math.ceil(end * rate));
+    const actualStart = first / rate;
+    const actualEnd = last / rate;
+    if (last - first < rate * 0.15) {
+      trimStatus.textContent = 'Keep at least 0.15 seconds of audio.';
+      return;
+    }
+    if (first === 0 && last === decodedBuffer.length) {
+      trimStatus.textContent = 'No edge audio to trim at this position.';
+      return;
+    }
+    snapshotFullTake();
+    stopTapPass();
+    stopClickPlayback();
+    stopMelody();
+    scrubToken++;
+    scrubCue?.stop();
+    analysisToken++;
+    const source = decodedBuffer;
+    const context = new AudioContext();
+    const cropped = context.createBuffer(source.numberOfChannels, last - first, rate);
+    const channels = [];
+    for (let channel = 0; channel < source.numberOfChannels; channel++) {
+      const samples = source.getChannelData(channel).subarray(first, last);
+      cropped.copyToChannel(samples, channel);
+      channels.push(samples);
+    }
+    void context.close().catch(() => {});
+    decodedBuffer = cropped;
+    waveSamples = Float32Array.from(waveSamples.subarray(first, last));
+    detectedNotes = cropTimedNotes(detectedNotes, actualStart, actualEnd);
+    automaticNotes = cropTimedNotes(automaticNotes, actualStart, actualEnd);
+    analysisFrames = analysisFrames.filter(frame => frame.time >= actualStart && frame.time <= actualEnd)
+      .map(frame => ({ ...frame, time: frame.time - actualStart }));
+    tapAnchor -= actualStart;
+    selectedNote = null;
+    editedBuffer = null;
+    timelineDuration = cropped.duration;
+    waveNow.setAttribute('aria-valuemax', timelineDuration.toFixed(2));
+    showRecordingBlob(encodeWav(channels, rate));
+    audio.currentTime = 0;
+    estimatedBpm = estimateNotePulse(detectedNotes)?.bpm ?? null;
+    updateTempoDisplay();
+    el('analyze-duration').textContent = `${timelineDuration.toFixed(1)} seconds`;
+    waveScroll.scrollLeft = 0;
+    noteScroll.scrollLeft = 0;
+    trimRestoreButton.disabled = false;
+    afterStructureEdit('Take trimmed. Notes and taps now use the shortened timeline.');
+    trimStatus.textContent = `Trimmed to ${timelineDuration.toFixed(2)} seconds. Download recording saves the shortened WAV.`;
+  }
+
+  trimQuietButton.addEventListener('click', () => {
+    if (!decodedBuffer) return;
+    const { start, end } = quietEdgeBounds(waveSamples, decodedBuffer.sampleRate, timelineDuration);
+    applyTrim(start, end);
+  });
+  const currentTrimPosition = () => chunkPlayback?.currentTime() ?? clickPlayback?.currentTime() ?? melodyPlayback?.currentTime() ?? audio.currentTime;
+  trimStartButton.addEventListener('click', () => applyTrim(currentTrimPosition(), timelineDuration));
+  trimEndButton.addEventListener('click', () => applyTrim(0, currentTrimPosition()));
+  trimRestoreButton.addEventListener('click', () => {
+    if (!fullTakeState || !originalBlob) return;
+    stopTapPass();
+    stopClickPlayback();
+    stopMelody();
+    const saved = fullTakeState;
+    decodedBuffer = saved.buffer;
+    waveSamples = saved.samples;
+    detectedNotes = saved.notes.map(note => ({ ...note }));
+    automaticNotes = saved.automaticNotes.map(note => ({ ...note }));
+    analysisFrames = saved.frames.map(frame => ({ ...frame }));
+    tapAnchor = saved.tapAnchor;
+    tapShift = saved.tapShift;
+    noteTaps = [...saved.noteTaps];
+    tapCaptureMode = saved.tapCaptureMode;
+    estimatedBpm = saved.estimatedBpm;
+    manualBpm = saved.manualBpm;
+    tempoTaps = [...saved.tempoTaps];
+    selectedNote = null;
+    editedBuffer = null;
+    timelineDuration = decodedBuffer.duration;
+    waveNow.setAttribute('aria-valuemax', timelineDuration.toFixed(2));
+    showRecordingBlob(originalBlob);
+    audio.currentTime = 0;
+    waveScroll.scrollLeft = 0;
+    noteScroll.scrollLeft = 0;
+    el('analyze-duration').textContent = `${timelineDuration.toFixed(1)} seconds`;
+    updateTempoDisplay();
+    fullTakeState = null;
+    trimRestoreButton.disabled = true;
+    afterStructureEdit('Full take restored.');
+    trimStatus.textContent = 'Full recording restored.';
+  });
+
   function afterStructureEdit(message) {
     editedBuffer = null;
+    if (chunkPlayback) stopChunkPlayback();
     stopMelody();
     renderTimeline();
     playNotesButton.disabled = !detectedNotes.length;
@@ -419,7 +856,32 @@ export function initAnalyzeVoice() {
     notePlaybackStatus.textContent = message;
   }
 
+  tapsApplyButton.addEventListener('click', () => {
+    if (!decodedBuffer || !noteTaps.length) return;
+    const positions = markerPositions();
+    const marked = notesFromMarkers(positions, analysisFrames, automaticNotes, timelineDuration);
+    if (!marked.length) {
+      tapsStatus.textContent = 'No sung pitches found under these taps. Slide the tap track and try again.';
+      return;
+    }
+    detectedNotes = marked.map(note => ({ ...note, targetMidi: null }));
+    selectedNote = null;
+    estimatedBpm = estimateNotePulse(detectedNotes)?.bpm ?? null;
+    updateTempoDisplay();
+    afterStructureEdit(`Used ${marked.length} tap starts. Adjust note ends and pitches on the timeline.`);
+    tapsStatus.textContent = `${marked.length} notes placed from ${noteTaps.length} taps.`;
+  });
+  tapsRestoreButton.addEventListener('click', () => {
+    if (!decodedBuffer) return;
+    detectedNotes = automaticNotes.map(note => ({ ...note, targetMidi: null }));
+    selectedNote = null;
+    estimatedBpm = estimateNotePulse(detectedNotes)?.bpm ?? null;
+    updateTempoDisplay();
+    afterStructureEdit('Automatic notes restored.');
+  });
+
   function stopMelody(message = '', keepPosition = true) {
+    stopPitchCue();
     melodyToken++;
     preparingMelody = false;
     if (melodyPlayback && keepPosition) audio.currentTime = melodyPlayback.currentTime();
@@ -433,6 +895,55 @@ export function initAnalyzeVoice() {
     notePlaybackStatus.textContent = message;
     if (audio.paused) stopPlayheadLoop();
   }
+
+  function stopClickPlayback(message = '') {
+    clickPlaybackToken++;
+    clickPlayback?.stop();
+    clickPlayback = null;
+    tapsPlayButton.textContent = '▶ Play tap clicks';
+    tapsPlayVoiceButton.textContent = '▶ Play voice + clicks';
+    tapsPlayStatus.textContent = message;
+    if (audio.paused && !melodyPlayback) stopPlayheadLoop();
+  }
+
+  function stopGuidePlayback() {
+    guideToken++;
+    guidePlayback?.stop();
+    guidePlayback = null;
+  }
+
+  async function startClickPlayback(withVoice) {
+    if (clickPlayback) { stopClickPlayback('Click playback stopped.'); return; }
+    stopChunkPlayback();
+    const times = decodedBuffer ? markerPositions() : noteTaps.map(time => time - noteTaps[0]);
+    if (!times.length || (withVoice && !decodedBuffer)) return;
+    stopMelody();
+    audio.pause();
+    const token = ++clickPlaybackToken;
+    tapsPlayButton.disabled = true;
+    tapsPlayVoiceButton.disabled = true;
+    tapsPlayStatus.textContent = 'Preparing click track…';
+    try {
+      const playback = await playClickTrack(times, withVoice ? decodedBuffer : null, Number(speedSelect.value));
+      if (token !== clickPlaybackToken || !active) { playback?.stop(); return; }
+      clickPlayback = playback;
+      tapsPlayButton.disabled = false;
+      tapsPlayVoiceButton.disabled = !decodedBuffer;
+      (withVoice ? tapsPlayVoiceButton : tapsPlayButton).textContent = '■ Stop clicks';
+      tapsPlayStatus.textContent = withVoice ? 'Playing voice with aligned clicks.' : 'Playing tap clicks.';
+      if (decodedBuffer && playheadFrame == null) playheadFrame = requestAnimationFrame(animatePlayhead);
+      playback.done.then(() => {
+        if (clickPlayback === playback) stopClickPlayback('Click playback finished.');
+      });
+    } catch (error) {
+      if (token === clickPlaybackToken) {
+        updateTapControls();
+        tapsPlayStatus.textContent = `Could not play clicks: ${error.name || 'audio error'}.`;
+      }
+    }
+  }
+  tapsPlayButton.addEventListener('click', () => startClickPlayback(false));
+  tapsPlayVoiceButton.addEventListener('click', () => startClickPlayback(true));
 
   waveScroll.addEventListener('scroll', () => { noteScroll.scrollLeft = waveScroll.scrollLeft; });
   noteScroll.addEventListener('scroll', () => { waveScroll.scrollLeft = noteScroll.scrollLeft; });
@@ -512,6 +1023,8 @@ export function initAnalyzeVoice() {
   speedSelect.addEventListener('change', () => {
     audio.playbackRate = Number(speedSelect.value);
     audio.preservesPitch = true;
+    if (clickPlayback) stopClickPlayback('Playback speed changed. Play clicks again to hear the new speed.');
+    if (chunkPlayback) stopChunkPlayback('Playback speed changed. Play the chunk again.');
     if (melodyPlayback) {
       const mode = melodyMode;
       stopMelody();
@@ -529,7 +1042,7 @@ export function initAnalyzeVoice() {
 
   function updatePlayhead(follow = false) {
     if (!timelineDuration) return;
-    const time = melodyPlayback ? melodyPlayback.currentTime() : audio.currentTime;
+    const time = chunkPlayback ? chunkPlayback.currentTime() : clickPlayback ? clickPlayback.currentTime() : melodyPlayback ? melodyPlayback.currentTime() : audio.currentTime;
     const x = timelineX(time, timelineDuration, zoom);
     nowLines.forEach(line => { line.style.left = `${x}px`; });
     playheadTime.textContent = `${time.toFixed(2)} s`;
@@ -550,19 +1063,22 @@ export function initAnalyzeVoice() {
 
   function animatePlayhead() {
     updatePlayhead(true);
-    if (melodyPlayback || (!audio.paused && !audio.ended)) playheadFrame = requestAnimationFrame(animatePlayhead);
+    if (chunkPlayback || clickPlayback || melodyPlayback || (!audio.paused && !audio.ended)) playheadFrame = requestAnimationFrame(animatePlayhead);
     else playheadFrame = null;
   }
 
   audio.addEventListener('play', () => {
+    stopPitchCue();
+    if (chunkPlayback) stopChunkPlayback();
+    if (clickPlayback) stopClickPlayback();
     scrubToken++;
     scrubCue?.stop();
     scrubCue = null;
     if (melodyPlayback || preparingMelody) stopMelody('', false);
     if (playheadFrame == null) playheadFrame = requestAnimationFrame(animatePlayhead);
   });
-  audio.addEventListener('pause', () => { if (!melodyPlayback) stopPlayheadLoop(); });
-  audio.addEventListener('ended', () => { if (!melodyPlayback) stopPlayheadLoop(); });
+  audio.addEventListener('pause', () => { if (!melodyPlayback && !chunkPlayback && !clickPlayback) stopPlayheadLoop(); });
+  audio.addEventListener('ended', () => { if (!melodyPlayback && !chunkPlayback && !clickPlayback) stopPlayheadLoop(); });
   audio.addEventListener('seeked', () => updatePlayhead());
   audio.addEventListener('timeupdate', () => updatePlayhead());
 
@@ -572,6 +1088,7 @@ export function initAnalyzeVoice() {
   }
 
   function clearRecording() {
+    stopChunkPlayback();
     analysisToken++;
     scrubToken++;
     scrubCue?.stop();
@@ -581,6 +1098,12 @@ export function initAnalyzeVoice() {
     editedBuffer = null;
     waveSamples = null;
     analysisFrames = [];
+    automaticNotes = [];
+    originalBlob = null;
+    fullTakeState = null;
+    trimRestoreButton.disabled = true;
+    trimStatus.textContent = 'Move the playhead to an edge, then trim.';
+    tapAnchor = 0;
     selectedNote = null;
     tempoTaps = [];
     manualBpm = null;
@@ -598,8 +1121,12 @@ export function initAnalyzeVoice() {
     downloadAbcButton.disabled = true;
     downloadMidiButton.disabled = true;
     stopMelody();
+    stopClickPlayback();
+    stopGuidePlayback();
     notePlaybackStatus.textContent = '';
     timelineDuration = 0;
+    chunkIndex = 0;
+    updateChunkControls();
     nowLines.forEach(line => { line.style.display = 'none'; });
     stopPlayheadLoop();
     audio.pause();
@@ -611,14 +1138,19 @@ export function initAnalyzeVoice() {
     runButton.disabled = true;
     downloadButton.disabled = true;
     el('analyze-results').classList.add('hidden');
+    updateTapControls();
   }
 
   function finishRecording() {
     clearInterval(timerId);
     timerId = null;
     stopTracks();
+    stopGuidePlayback();
     const mimeType = recorder?.mimeType || chunks[0]?.type || 'audio/webm';
     recorder = null;
+    tapsStartButton.disabled = false;
+    tapKeyButton.disabled = false;
+    tapsWithVoice.disabled = false;
     startButton.disabled = false;
     stopButton.disabled = true;
     const recorded = chunks.filter(chunk => chunk.size > 0);
@@ -627,6 +1159,7 @@ export function initAnalyzeVoice() {
       return;
     }
     blob = new Blob(recorded, { type: mimeType });
+    originalBlob = blob;
     chunks = [];
     audioUrl = URL.createObjectURL(blob);
     audio.src = audioUrl;
@@ -635,6 +1168,8 @@ export function initAnalyzeVoice() {
     runButton.disabled = false;
     downloadButton.disabled = false;
     status.textContent = 'Recording ready. Listen back, then click Analyze recording.';
+    if (tapCaptureMode === 'live') tapsStatus.textContent = noteTaps.length ? `${noteTaps.length} taps captured with the voice.` : 'No note-start taps captured with the voice.';
+    updateTapControls();
   }
 
   downloadButton.addEventListener('click', () => {
@@ -653,8 +1188,18 @@ export function initAnalyzeVoice() {
 
   startButton.addEventListener('click', async () => {
     if (recorder || stream) return;
+    endTapKeyChoice();
+    stopTapPass();
     startButton.disabled = true;
     clearRecording();
+    if (tapCaptureMode === 'live' || tapsWithVoice.checked) {
+      noteTaps = [];
+      tapShift = 0;
+    }
+    tapCaptureMode = tapsWithVoice.checked ? 'live' : 'separate';
+    tapsStatus.textContent = tapCaptureMode === 'live' ? `Live tap capture armed: press ${tapKeyName} at each note start.`
+      : noteTaps.length ? `${noteTaps.length} separate taps ready for alignment.` : 'No taps recorded.';
+    updateTapControls();
     timer.textContent = '0:00';
     status.textContent = 'Waiting for microphone permission…';
     try {
@@ -672,14 +1217,28 @@ export function initAnalyzeVoice() {
       recorder.addEventListener('stop', finishRecording, { once: true });
       recorder.addEventListener('error', () => { status.textContent = 'Recording failed. Please try again.'; });
       recorder.start();
+      tapsStartButton.disabled = true;
+      tapKeyButton.disabled = true;
+      tapsWithVoice.disabled = true;
       startedAt = performance.now();
+      if (tapsGuideVoice.checked && noteTaps.length && tapCaptureMode === 'separate') {
+        const guideTimes = noteTaps.map(time => time - noteTaps[0]);
+        const token = ++guideToken;
+        void playClickTrack(guideTimes).then(playback => {
+          if (token !== guideToken || recorder?.state !== 'recording') { playback?.stop(); return; }
+          guidePlayback = playback;
+          playback?.done.then(() => { if (guidePlayback === playback) guidePlayback = null; });
+        }).catch(() => { if (token === guideToken) tapsStatus.textContent = 'Could not play guide clicks; voice recording continues.'; });
+      }
       timerId = setInterval(() => { timer.textContent = clockTime((performance.now() - startedAt) / 1000); }, 200);
       stopButton.disabled = false;
-      status.textContent = 'Recording… sing your solo phrase, then stop.';
+      status.textContent = tapCaptureMode === 'live' ? `Recording… sing and tap ${tapKeyName} at each note start.` : 'Recording… sing your solo phrase, then stop.';
     } catch (error) {
       stopTracks();
       recorder = null;
       startButton.disabled = false;
+      tapKeyButton.disabled = false;
+      tapsWithVoice.disabled = false;
       status.textContent = `Could not record: ${error.name || error.message || 'microphone error'}.`;
     }
   });
@@ -695,6 +1254,7 @@ export function initAnalyzeVoice() {
 
   runButton.addEventListener('click', async () => {
     if (!blob) return;
+    stopChunkPlayback();
     stopMelody();
     audio.pause();
     const token = ++analysisToken;
@@ -712,6 +1272,8 @@ export function initAnalyzeVoice() {
       }, () => token !== analysisToken);
       if (!result || token !== analysisToken) return;
       detectedNotes = result.notes.map(note => ({ ...note, targetMidi: null }));
+      automaticNotes = result.notes.map(note => ({ ...note }));
+      if (!fullTakeState) tapAnchor = tapCaptureMode === 'live' ? noteTaps[0] ?? 0 : result.notes[0]?.start ?? 0;
       decodedBuffer = buffer;
       // Playback can detach an AudioBuffer's channel view. Keep drawing data independent.
       waveSamples = Float32Array.from(result.channel);
@@ -755,15 +1317,19 @@ export function initAnalyzeVoice() {
 
   function onNoteEdit(note) {
     editedBuffer = null;
+    if (chunkPlayback) stopChunkPlayback();
     stopMelody();
     syncSelection();
-    notePlaybackStatus.textContent = `${midiToName(note.midi)} → ${midiToName(note.targetMidi)}. Play tuned voice to hear the change.`;
+    notePlaybackStatus.textContent = `${midiToName(note.midi)} → ${midiToName(note.targetMidi)}. Play tuned voice to hear it in the recording.`;
+    void auditionPitch(note.targetMidi ?? note.midi);
   }
 
   function onBoundaryEdit(note) {
     editedBuffer = null;
+    if (chunkPlayback) stopChunkPlayback();
     stopMelody();
     drawNotes(el('analyze-note-track'), noteList, detectedNotes, timelineDuration, zoom, pitchRangeSelect.value, Number(trackHeightSlider.value), onNoteEdit, selectNote, seekFromClientX, renderTimeline, selectedNote);
+    updateChunkControls();
     syncSelection();
     notePlaybackStatus.textContent = `Note boundary: ${note.start.toFixed(2)}–${note.end.toFixed(2)} s.`;
   }
@@ -867,6 +1433,8 @@ export function initAnalyzeVoice() {
   });
 
   async function startMelody(mode) {
+    stopChunkPlayback();
+    stopClickPlayback();
     scrubToken++;
     scrubCue?.stop();
     scrubCue = null;
@@ -931,6 +1499,11 @@ export function initAnalyzeVoice() {
     onEnter() { active = true; },
     onLeave() {
       active = false;
+      stopChunkPlayback();
+      endTapKeyChoice();
+      stopTapPass();
+      stopClickPlayback();
+      stopGuidePlayback();
       scrubToken++;
       scrubCue?.stop();
       scrubCue = null;
